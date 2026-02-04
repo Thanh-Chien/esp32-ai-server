@@ -1,23 +1,63 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
-import openai
+from openai import OpenAI
+import uuid
 import os
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
+sessions = {}   # session_id → message history
 
-class Req(BaseModel):
+# =====================
+# DATA MODEL
+# =====================
+class TextReq(BaseModel):
     text: str
+    session_id: str | None = None
 
+# =====================
 @app.get("/")
 def root():
-    return {"status": "ESP32 AI server is running"}
+    return {"status": "ESP32 AI Server OK"}
 
+# =====================
+# TEXT → GPT → TEXT
+# =====================
 @app.post("/chat")
-def chat(req: Req):
-    r = openai.ChatCompletion.create(
+def chat(req: TextReq):
+    sid = req.session_id or str(uuid.uuid4())
+
+    if sid not in sessions:
+        sessions[sid] = []
+
+    sessions[sid].append({"role": "user", "content": req.text})
+
+    resp = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": req.text}]
+        messages=sessions[sid],
+        temperature=0.6
     )
-    return {"reply": r.choices[0].message.content}
+
+    reply = resp.choices[0].message.content
+    sessions[sid].append({"role": "assistant", "content": reply})
+
+    return {
+        "reply": reply,
+        "session_id": sid
+    }
+
+# =====================
+# TEXT → SPEECH (TTS)
+# =====================
+@app.post("/tts")
+def tts(req: TextReq):
+    audio = client.audio.speech.create(
+        model="gpt-4o-mini-tts",
+        voice="alloy",
+        input=req.text
+    )
+
+    return {
+        "audio_base64": audio.data
+    }
