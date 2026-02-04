@@ -1,13 +1,15 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI
 from pydantic import BaseModel
 from openai import OpenAI
 import uuid
 import os
+import base64
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 sessions = {}   # session_id → message history
+
 
 # =====================
 # DATA MODEL
@@ -16,10 +18,12 @@ class TextReq(BaseModel):
     text: str
     session_id: str | None = None
 
+
 # =====================
 @app.get("/")
 def root():
     return {"status": "ESP32 AI Server OK"}
+
 
 # =====================
 # TEXT → GPT → TEXT
@@ -33,19 +37,21 @@ def chat(req: TextReq):
 
     sessions[sid].append({"role": "user", "content": req.text})
 
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=sessions[sid],
+    resp = client.responses.create(
+        model="gpt-4.1-mini",
+        input=sessions[sid],
         temperature=0.6
     )
 
-    reply = resp.choices[0].message.content
+    reply = resp.output_text
+
     sessions[sid].append({"role": "assistant", "content": reply})
 
     return {
         "reply": reply,
         "session_id": sid
     }
+
 
 # =====================
 # TEXT → SPEECH (TTS)
@@ -58,6 +64,8 @@ def tts(req: TextReq):
         input=req.text
     )
 
+    audio_base64 = base64.b64encode(audio.read()).decode("utf-8")
+
     return {
-        "audio_base64": audio.data
+        "audio_base64": audio_base64
     }
