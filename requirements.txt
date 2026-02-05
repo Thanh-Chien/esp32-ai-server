@@ -1,4 +1,5 @@
-fastapi
-uvicorn
+flask
 openai
-python-multipart
+requests
+youtube-search-python
+gunicorn

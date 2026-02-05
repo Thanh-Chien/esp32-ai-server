@@ -1,70 +1,61 @@
-from flask import Flask, request, jsonify, send_file
-import openai
-import yt_dlp
-from gtts import gTTS
-import os
-import time
+from flask import Flask, request, jsonify, Response
+from openai import OpenAI
+from youtubesearchpython import VideosSearch
+import requests, os
 
 app = Flask(__name__)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ===== OPENAI KEY =====
-openai.api_key = "YOUR_OPENAI_KEY"
+@app.route("/")
+def home():
+    return jsonify({"status": "OK", "server": "ESP32 AI FINAL"})
 
-# =========================
-# POST /chat  → hỏi GPT
-# =========================
+# ===== CHAT =====
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.json
+    data = request.get_json(force=True)
     text = data.get("text","")
 
     res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-          {"role":"system","content":"Tra loi tieng Viet, ngan gon"},
-          {"role":"user","content": text}
+            {"role":"system","content":"Tra loi tieng Viet ngan gon"},
+            {"role":"user","content": text}
         ]
     )
-    return jsonify({
-        "reply": res.choices[0].message.content
-    })
 
-# =========================
-# POST /speech → text -> mp3
-# =========================
+    reply = res.choices[0].message.content
+    is_music = ("nhac" in text.lower()) or ("phat" in text.lower())
+
+    return jsonify({"reply": reply, "music": is_music})
+
+# ===== TTS =====
 @app.route("/speech", methods=["POST"])
 def speech():
     text = request.json["text"]
 
     audio = client.audio.speech.create(
         model="gpt-4o-mini-tts",
-        voice="female",
+        voice="alloy",
         input=text
     )
 
-    return Response(audio, mimetype="audio/mpeg")
+    return Response(audio.read(), mimetype="audio/mpeg")
 
-# =========================
-# POST /music → tìm YouTube
-# =========================
+# ===== MUSIC =====
 @app.route("/music", methods=["POST"])
 def music():
     query = request.json["query"]
 
-    result = YoutubeSearch(query, max_results=1).to_dict()
-    video_id = result[0]["id"]
+    search = VideosSearch(query, limit=1)
+    link = search.result()["result"][0]["link"]
 
-    stream_url = f"https://www.youtube.com/watch?v={video_id}"
-    return jsonify({"url": stream_url})
+    # proxy audio stream
+    stream = f"https://piped.video/api/v1/streams/{link.split('v=')[1]}"
+    r = requests.get(stream, stream=True)
 
-# =========================
-
-@app.route("/")
-def home():
-    return jsonify({
-        "status": "OK",
-        "server": "ESP32 AI FINAL"
-    })
+    return Response(r.iter_content(1024), content_type="audio/mpeg")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
