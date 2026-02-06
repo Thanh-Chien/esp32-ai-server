@@ -1,60 +1,109 @@
 from flask import Flask, request, jsonify, Response
 from openai import OpenAI
 from youtubesearchpython import VideosSearch
-import requests, os
+import os
+import sys
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Lấy API Key từ Environment Variable trên Render
+# Nếu không có, server sẽ in thông báo lỗi rõ ràng ra Logs
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    print("ERROR: OPENAI_API_KEY chưa được thiết lập trên Render!")
+    # Không dừng server để bạn vẫn truy cập được trang chủ để debug
+else:
+    client = OpenAI(api_key=api_key)
+
+# =========================
+# ROOT - Kiểm tra server sống
+# =========================
 @app.route("/")
 def home():
-    return jsonify({"status": "OK", "server": "ESP32 AI FINAL"})
+    return jsonify({
+        "status": "OK",
+        "server": "ESP32 AI FINAL",
+        "message": "Server đang chạy trực tuyến!"
+    })
 
-# ===== CHAT =====
+# =========================
+# CHAT - Kết nối GPT-4o-mini
+# =========================
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.get_json(force=True)
-    text = data.get("text","")
+    try:
+        # Kiểm tra JSON đầu vào
+        data = request.get_json(force=True, silent=True)
+        if data is None:
+            return jsonify({"ok": False, "reply": "Lỗi: Dữ liệu gửi lên không phải JSON chuẩn."}), 400
+            
+        text = data.get("text", "")
+        if not text:
+            return jsonify({"ok": False, "reply": "Nội dung trống."})
 
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role":"system","content":"Tra loi tieng Viet ngan gon"},
-            {"role":"user","content": text}
-        ]
-    )
+        # Gọi OpenAI
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Bạn là trợ lý ảo tiếng Việt."},
+                {"role": "user", "content": text}
+            ],
+            max_tokens=150
+        )
 
-    reply = res.choices[0].message.content
-    is_music = ("nhac" in text.lower()) or ("phat" in text.lower())
+        reply = response.choices[0].message.content.strip()
+        return jsonify({"ok": True, "reply": reply})
 
-    return jsonify({"reply": reply, "music": is_music})
+    except Exception as e:
+        # In lỗi chi tiết ra Render Logs để bạn xem được
+        print(f"CRITICAL CHAT ERROR: {str(e)}")
+        return jsonify({
+            "ok": False, 
+            "reply": f"Lỗi hệ thống: {str(e)}"
+        }), 500
 
-# ===== TTS =====
+# =========================
+# SPEECH - Text-to-Speech
+# =========================
 @app.route("/speech", methods=["POST"])
 def speech():
-    text = request.json["text"]
+    try:
+        data = request.get_json(force=True)
+        text = data.get("text", "")
+        
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="alloy",
+            input=text
+        )
+        return Response(response.content, mimetype="audio/mpeg")
+    except Exception as e:
+        print(f"TTS ERROR: {str(e)}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-    audio = client.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice="alloy",
-        input=text
-    )
-
-    return Response(audio.read(), mimetype="audio/mpeg")
-
-# ===== MUSIC =====
+# =========================
+# MUSIC - YouTube Search
+# =========================
 @app.route("/music", methods=["POST"])
 def music():
-    query = request.json["query"]
-
-    search = VideosSearch(query, limit=1)
-    link = search.result()["result"][0]["link"]
-
-    # proxy audio stream
-    stream = f"https://piped.video/api/v1/streams/{link.split('v=')[1]}"
-    r = requests.get(stream, stream=True)
-
-    return Response(r.iter_content(1024), content_type="audio/mpeg")
+    try:
+        data = request.get_json(force=True)
+        query = data.get("query", "")
+        
+        search = VideosSearch(query, limit=1)
+        results = search.result()["result"]
+        
+        if results:
+            return jsonify({
+                "ok": True,
+                "title": results[0]["title"],
+                "url": results[0]["link"]
+            })
+        return jsonify({"ok": False, "reply": "Không tìm thấy nhạc."})
+    except Exception as e:
+        print(f"MUSIC ERROR: {str(e)}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
