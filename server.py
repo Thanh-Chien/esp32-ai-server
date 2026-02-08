@@ -2,29 +2,59 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from google.genai import Client
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Khởi tạo Client mặc định (để thư viện tự chọn phiên bản tốt nhất)
-client = Client(api_key=API_KEY)
+if not API_KEY:
+    raise ValueError("Thiếu GEMINI_API_KEY!")
 
-app = FastAPI()
+# Khởi tạo Client với API v1 để tránh lỗi 404 (model not found on v1beta)
+client = Client(
+    api_key=API_KEY,
+    http_options={'api_version': 'v1'}
+)
+
+app = FastAPI(title="Gemini ESP32 Server")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ChatRequest(BaseModel):
     prompt: str
     history: list = []
 
+@app.get("/")
+async def root():
+    return {"message": "Server đã online. Dùng /chat hoặc /list-models"}
+
+# API liệt kê model (Đã sửa lỗi Attribute)
+@app.get("/list-models")
+async def list_models():
+    try:
+        models = []
+        # Thư viện mới dùng client.models.list()
+        for m in client.models.list():
+            models.append({
+                "name": m.name,
+                "display_name": m.display_name
+            })
+        return {"available_models": models}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # GIẢI PHÁP: Thử dùng model ID đầy đủ hoặc model thay thế
-        # Thử 1: gemini-1.5-flash
-        # Thử 2 (nếu lỗi): gemini-1.5-flash-001
-        
+        # Sử dụng model ID đầy đủ kèm tiền tố 'models/'
         chat_session = client.chats.create(
-            model="gemini-1.5-flash", 
+            model="models/gemini-1.5-flash", 
             history=request.history
         )
         
@@ -32,19 +62,11 @@ async def chat_endpoint(request: ChatRequest):
         return {"reply": response.text}
 
     except Exception as e:
-        print(f"DEBUG LOG: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Model không phản hồi. Hãy kiểm tra API Key hoặc khu vực hỗ trợ."
-        )
+        error_msg = str(e)
+        print(f"DEBUG LOG: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
-# API này để bạn kiểm tra xem Key của bạn dùng được model nào
-@app.get("/list-models")
-async def list_models():
-    try:
-        models = []
-        for m in client.models.list():
-            models.append({"name": m.name, "methods": m.supported_generation_methods})
-        return {"available_models": models}
-    except Exception as e:
-        return {"error": str(e)}
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
