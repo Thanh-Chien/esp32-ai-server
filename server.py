@@ -5,56 +5,57 @@ from google.genai import Client
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# 1. Cấu hình môi trường
+# Nạp biến môi trường
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not API_KEY:
-    raise ValueError("Lỗi: Thiếu GEMINI_API_KEY trong biến môi trường!")
+    raise ValueError("Lỗi: Thiếu GEMINI_API_KEY. Hãy kiểm tra file .env hoặc cấu hình Render!")
 
-# 2. Khởi tạo Client Gemini & FastAPI
+# Khởi tạo
 client = Client(api_key=API_KEY)
-app = FastAPI(title="Gemini AI Server")
+app = FastAPI(title="Gemini AI Server Professional")
 
-# 3. Cấu hình CORS (Cho phép các ứng dụng khác gọi vào)
+# Cấu hình CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Có thể thay bằng domain cụ thể của bạn để bảo mật
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Định dạng dữ liệu đầu vào
+# Cấu trúc dữ liệu
 class ChatRequest(BaseModel):
     prompt: str
     history: list = []
 
 @app.get("/")
 def health_check():
-    return {"status": "online", "model": "gemini-1.5-flash"}
+    return {"status": "online", "message": "Server Gemini đang hoạt động!"}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # Gửi tin nhắn đến Gemini (Sử dụng SDK mới nhất)
-        response = client.models.generate_content(
+        # Cách gọi chuẩn: Khởi tạo chat session với history riêng biệt
+        chat_session = client.chats.create(
             model="gemini-1.5-flash",
-            contents=request.prompt,
-            config={
-                "history": request.history
-            }
+            history=request.history
         )
         
-        if not response.text:
-            raise HTTPException(status_code=500, detail="AI không trả về nội dung.")
-
-        return {"reply": response.text}
+        # Gửi tin nhắn mới
+        response = chat_session.send_message(request.prompt)
+        
+        return {
+            "reply": response.text,
+            "status": "success"
+        }
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Lỗi hệ thống: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__server__":
+if __name__ == "__main__":
     import uvicorn
-    # Chạy local tại port 8000
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    # Port 10000 là mặc định của Render
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
