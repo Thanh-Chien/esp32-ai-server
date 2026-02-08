@@ -5,18 +5,20 @@ from google.genai import Client
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Nạp biến môi trường
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not API_KEY:
-    raise ValueError("Lỗi: Thiếu GEMINI_API_KEY. Hãy kiểm tra file .env hoặc cấu hình Render!")
+    raise ValueError("Lỗi: Thiếu GEMINI_API_KEY!")
 
-# Khởi tạo
-client = Client(api_key=API_KEY)
-app = FastAPI(title="Gemini AI Server Professional")
+# Cấu hình Client ép sử dụng phiên bản API v1 để tránh lỗi 404 Not Found
+client = Client(
+    api_key=API_KEY,
+    http_options={'api_version': 'v1'}
+)
 
-# Cấu hình CORS
+app = FastAPI(title="Gemini AI Server")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,25 +26,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Cấu trúc dữ liệu
 class ChatRequest(BaseModel):
     prompt: str
     history: list = []
 
 @app.get("/")
 def health_check():
-    return {"status": "online", "message": "Server Gemini đang hoạt động!"}
+    return {"status": "online"}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # Cách gọi chuẩn: Khởi tạo chat session với history riêng biệt
+        # Sử dụng model ID chuẩn
         chat_session = client.chats.create(
             model="gemini-1.5-flash",
             history=request.history
         )
         
-        # Gửi tin nhắn mới
         response = chat_session.send_message(request.prompt)
         
         return {
@@ -51,11 +51,12 @@ async def chat_endpoint(request: ChatRequest):
         }
 
     except Exception as e:
-        print(f"Lỗi hệ thống: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        print(f"Lỗi: {error_msg}")
+        # Nếu vẫn 404, hãy thử đổi model sang 'gemini-1.5-flash-001'
+        raise HTTPException(status_code=500, detail=error_msg)
 
 if __name__ == "__main__":
     import uvicorn
-    # Port 10000 là mặc định của Render
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
