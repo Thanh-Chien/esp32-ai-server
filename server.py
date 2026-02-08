@@ -1,42 +1,60 @@
 import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from google.genai import Client
 from fastapi.middleware.cors import CORSMiddleware
-import google.generativeai as genai
 from dotenv import load_dotenv
 
-# Tải biến môi trường
+# 1. Cấu hình môi trường
 load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Cấu hình Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
+if not API_KEY:
+    raise ValueError("Lỗi: Thiếu GEMINI_API_KEY trong biến môi trường!")
 
-app = FastAPI()
+# 2. Khởi tạo Client Gemini & FastAPI
+client = Client(api_key=API_KEY)
+app = FastAPI(title="Gemini AI Server")
 
-# Cấu hình CORS để có thể gọi từ trình duyệt hoặc ứng dụng khác
+# 3. Cấu hình CORS (Cho phép các ứng dụng khác gọi vào)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Có thể thay bằng domain cụ thể của bạn để bảo mật
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Định dạng dữ liệu đầu vào
 class ChatRequest(BaseModel):
     prompt: str
     history: list = []
 
+@app.get("/")
+def health_check():
+    return {"status": "online", "model": "gemini-1.5-flash"}
+
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest):
     try:
-        # Khởi tạo phiên chat với lịch sử nhận từ client
-        chat_session = model.start_chat(history=request.history)
-        response = chat_session.send_message(request.prompt)
+        # Gửi tin nhắn đến Gemini (Sử dụng SDK mới nhất)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=request.prompt,
+            config={
+                "history": request.history
+            }
+        )
         
+        if not response.text:
+            raise HTTPException(status_code=500, detail="AI không trả về nội dung.")
+
         return {"reply": response.text}
+
     except Exception as e:
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-async def root():
-    return {"message": "Server Python Gemini đang chạy!"}
+if __name__ == "__server__":
+    import uvicorn
+    # Chạy local tại port 8000
+    uvicorn.run(app, host="0.0.0.0", port=10000)
