@@ -52,9 +52,9 @@ async def list_models():
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # Sử dụng model ID đầy đủ kèm tiền tố 'models/'
+        # SỬA TÊN MODEL TẠI ĐÂY (Lấy chính xác từ danh sách bạn đã quét được)
         chat_session = client.chats.create(
-            model="models/gemini-1.5-flash", 
+            model="models/gemini-2.0-flash", 
             history=request.history
         )
         
@@ -62,9 +62,8 @@ async def chat_endpoint(request: ChatRequest):
         return {"reply": response.text}
 
     except Exception as e:
-        error_msg = str(e)
-        print(f"DEBUG LOG: {error_msg}")
-        raise HTTPException(status_code=500, detail=error_msg)
+        print(f"DEBUG LOG: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
