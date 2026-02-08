@@ -2,26 +2,13 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from google.genai import Client
-from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
+# Khởi tạo Client mặc định (để SDK tự chọn bản v1 hoặc v1beta phù hợp với Key Free)
+client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Khởi tạo Client ép về API v1 để ổn định hạn mức
-client = Client(
-    api_key=API_KEY,
-    http_options={'api_version': 'v1'}
-)
-
-app = FastAPI(title="Gemini ESP32 Server")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI()
 
 class ChatRequest(BaseModel):
     prompt: str
@@ -29,14 +16,14 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"status": "online", "model": "gemini-1.5-flash"}
+    return {"status": "success", "mode": "Free Tier Optimized"}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # Sử dụng gemini-1.5-flash vì có Quota ổn định nhất cho tài khoản Free
+        # Dùng bản Lite để tránh lỗi 429 (Resource Exhausted)
         chat_session = client.chats.create(
-            model="models/gemini-1.5-flash", 
+            model="gemini-2.0-flash-lite-preview-02-05", 
             history=request.history
         )
         
@@ -45,25 +32,17 @@ async def chat_endpoint(request: ChatRequest):
 
     except Exception as e:
         error_msg = str(e)
-        print(f"DEBUG LOG: {error_msg}")
-        
-        # Xử lý lỗi 429 (Hết hạn mức)
+        # Nếu bị hết hạn mức (429), trả về thông báo thay vì sập server
         if "429" in error_msg:
-            raise HTTPException(
-                status_code=429, 
-                detail="Hết hạn mức yêu cầu (Quota). Vui lòng đợi 10-60 giây rồi thử lại."
-            )
+            return {"reply": "Hệ thống đang bận do hạn mức Free đã hết. Thử lại sau 1 phút nhé!"}
         
+        # Nếu model không tồn tại (404), thử dùng bản Lite cơ bản
+        if "404" in error_msg:
+             return {"reply": "Lỗi cấu hình Model. Hãy kiểm tra lại tên model trong list-models."}
+             
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.get("/list-models")
 async def list_models():
-    try:
-        return {"available_models": [m.name for m in client.models.list()]}
-    except Exception as e:
-        return {"error": str(e)}
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Giúp bạn luôn theo dõi được Key Free của bạn đang được phép dùng model nào
+    return {"available_models": [m.name for m in client.models.list()]}
