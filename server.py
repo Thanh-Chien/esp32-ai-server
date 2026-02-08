@@ -2,61 +2,49 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from google.genai import Client
-from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not API_KEY:
-    raise ValueError("Lỗi: Thiếu GEMINI_API_KEY!")
+# Khởi tạo Client mặc định (để thư viện tự chọn phiên bản tốt nhất)
+client = Client(api_key=API_KEY)
 
-# Cấu hình Client ép sử dụng phiên bản API v1 để tránh lỗi 404 Not Found
-client = Client(
-    api_key=API_KEY,
-    http_options={'api_version': 'v1'}
-)
-
-app = FastAPI(title="Gemini AI Server")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI()
 
 class ChatRequest(BaseModel):
     prompt: str
     history: list = []
 
-@app.get("/")
-def health_check():
-    return {"status": "online"}
-
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # Sử dụng model ID chuẩn
+        # GIẢI PHÁP: Thử dùng model ID đầy đủ hoặc model thay thế
+        # Thử 1: gemini-1.5-flash
+        # Thử 2 (nếu lỗi): gemini-1.5-flash-001
+        
         chat_session = client.chats.create(
-            model="gemini-1.5-flash",
+            model="gemini-1.5-flash", 
             history=request.history
         )
         
         response = chat_session.send_message(request.prompt)
-        
-        return {
-            "reply": response.text,
-            "status": "success"
-        }
+        return {"reply": response.text}
 
     except Exception as e:
-        error_msg = str(e)
-        print(f"Lỗi: {error_msg}")
-        # Nếu vẫn 404, hãy thử đổi model sang 'gemini-1.5-flash-001'
-        raise HTTPException(status_code=500, detail=error_msg)
+        print(f"DEBUG LOG: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Model không phản hồi. Hãy kiểm tra API Key hoặc khu vực hỗ trợ."
+        )
 
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+# API này để bạn kiểm tra xem Key của bạn dùng được model nào
+@app.get("/list-models")
+async def list_models():
+    try:
+        models = []
+        for m in client.models.list():
+            models.append({"name": m.name, "methods": m.supported_generation_methods})
+        return {"available_models": models}
+    except Exception as e:
+        return {"error": str(e)}
