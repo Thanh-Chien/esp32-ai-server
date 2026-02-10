@@ -1,44 +1,47 @@
 import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from google.genai import Client
 from dotenv import load_dotenv
+import uvicorn
 
 load_dotenv()
-client = Client(api_key=os.getenv("GEMINI_API_KEY"))
+
 app = FastAPI()
 
-class ChatRequest(BaseModel):
-    prompt: str
-    history: list = []
+# ===== Gemini client =====
+client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-@app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    try:
-        # Sử dụng bản Lite mới nhất từ danh sách của bạn
-        # Bản này nhẹ, nhanh và ổn định nhất cho Key Free
-        chat_session = client.chats.create(
-            model="models/gemini-flash-lite-latest", 
-            history=request.history
-        )
-        
-        response = chat_session.send_message(request.prompt)
-        return {"reply": response.text}
-
-    except Exception as e:
-        error_msg = str(e)
-        print(f"Lỗi: {error_msg}")
-        
-        # Xử lý lỗi hết hạn mức 429
-        if "429" in error_msg:
-            return {"reply": "Hạn mức API Free đã hết (Quota Exceeded). Vui lòng đợi 30s-60s rồi thử lại."}
-            
-        raise HTTPException(status_code=500, detail=error_msg)
-
-@app.get("/list-models")
-async def list_models():
-    return {"available_models": [m.name for m in client.models.list()]}
-
+# ===== Health check =====
 @app.get("/")
 async def health():
     return {"status": "online"}
+
+# ===== WebSocket endpoint =====
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+
+    chat = client.chats.create(
+        model="models/gemini-flash-lite-latest"
+    )
+
+    try:
+        while True:
+            message = await ws.receive_text()
+
+            response = chat.send_message(message)
+
+            await ws.send_text(response.text)
+
+    except WebSocketDisconnect:
+        print("Client disconnected")
+
+    except Exception as e:
+        print("WS error:", e)
+        await ws.close()
+
+
+# ===== Run server =====
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,4 +1,5 @@
 fastapi
-uvicorn
-google-genai
+uvicorn[standard]
+google-generativeai
 python-dotenv
+websockets
