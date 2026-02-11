@@ -39,7 +39,8 @@ async def websocket_endpoint(ws: WebSocket):
 
     # Create chat session
     chat = client.chats.create(
-        model="gemini-1.5-flash"
+    model="models/gemini-2.5-flash-lite"
+
     )
 
     try:
