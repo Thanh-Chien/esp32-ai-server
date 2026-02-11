@@ -1,58 +1,92 @@
 import os
+import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from google.genai import Client
 from dotenv import load_dotenv
 
 # =========================
-# Load environment variables
+# Load ENV
 # =========================
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set in environment variables")
+    raise RuntimeError("GEMINI_API_KEY is not set")
 
 # =========================
-# Create FastAPI app
+# App + Client
 # =========================
-app = FastAPI(title="Gemini WebSocket Server")
+app = FastAPI(title="Gemini AI Server")
 
-# =========================
-# Create Gemini client
-# =========================
 client = Client(api_key=GEMINI_API_KEY)
 
+MODEL_NAME = "models/gemini-2.5-flash-lite"
+
 # =========================
-# Health check endpoint
+# Request schema
+# =========================
+class ChatRequest(BaseModel):
+    prompt: str
+    history: list = []
+
+# =========================
+# Health check
 # =========================
 @app.get("/")
 async def health():
     return {"status": "online"}
 
 # =========================
-# WebSocket endpoint
+# HTTP API (test bằng Postman dễ)
+# =========================
+@app.post("/chat")
+async def chat_api(data: ChatRequest):
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=data.prompt,
+        config={
+            "max_output_tokens": 80,
+            "temperature": 0.4
+        }
+    )
+
+    return {
+        "response": response.text,
+        "model": MODEL_NAME
+    }
+
+# =========================
+# WebSocket API
 # =========================
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
 
-    # Create chat session
-    chat = client.chats.create(
-    model="models/gemini-2.5-flash-lite"
-
-    )
-
     try:
         while True:
-            # Receive message from client
-            message = await ws.receive_text()
+            raw = await ws.receive_text()
+            payload = json.loads(raw)
 
-            # Send to Gemini
-            response = chat.send_message(message)
+            prompt = payload.get("prompt", "")
 
-            # Send response back
-            await ws.send_text(response.text)
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config={
+                    "max_output_tokens": 80,
+                    "temperature": 0.4
+                }
+            )
+
+            result = {
+                "response": response.text,
+                "model": MODEL_NAME
+            }
+
+            await ws.send_text(json.dumps(result))
 
     except WebSocketDisconnect:
         print("Client disconnected")
